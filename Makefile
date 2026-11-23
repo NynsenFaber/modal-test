@@ -1,7 +1,10 @@
-APP := example-vllm-inference
-SERVER := server/vllm_inference.py
+# All commands run from the repo root, as modules (-m), so `server` and `client` import each other.
+# Commands that call the server load VLLM_API_KEY from .env.
+APP := $(shell grep '^modal_app_name:' config/vllm-inference.yaml | cut -d' ' -f2)
+SERVER := -m server.vllm_inference
+RUN := uv run --env-file .env
 
-.PHONY: api-key download deploy serve test remove chat ui
+.PHONY: api-key download deploy serve remove chat ui test check
 
 # Create VLLM_API_KEY in .env (once) and push it to the `vllm-api-key` Modal Secret.
 api-key:
@@ -17,14 +20,20 @@ deploy:
 serve:
 	uv run modal serve $(SERVER)
 
-test:
-	uv run --env-file .env modal run -m tests.smoke_test
-
 remove:
 	uv run modal app stop $(APP)
 
 chat:
-	uv run --env-file .env python client/chat.py
+	$(RUN) python -m client.chat
 
 ui:
-	uv run --env-file .env python -m client.ui
+	$(RUN) python -m client.ui
+
+test:
+	$(RUN) modal run -m tests.smoke_test
+
+# Lint, format check and type check. Runs locally, no Modal or GPU needed.
+check:
+	uv run ruff check .
+	uv run ruff format --check .
+	uv run mypy

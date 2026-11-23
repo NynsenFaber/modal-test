@@ -12,4 +12,16 @@ dependencies = [
 [dependency-groups]
 dev = [
     "huggingface-hub>=2.4.0",
+    "mypy>=2.4.1",
+    "ruff>=0.17.6",
+    "types-pyyaml>=6.0.12.20261122",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["server", "client", "tests"]
+
+[tool.ruff.lint]
+# Defaults plus import sorting (I), pyupgrade (UP) and common bug patterns (B).
+extend-select = ["I", "UP", "B"]

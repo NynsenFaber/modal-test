@@ -1,8 +1,13 @@
-"""Chat with the deployed vLLM server through the OpenAI SDK.
+"""Terminal chat with the vLLM server, plus the client helpers shared by the UI and the test.
 
-    uv run python client/chat.py                      # interactive chat
-    uv run python client/chat.py "Explain SVD"        # one question, then exit
-    uv run python client/chat.py --url https://...-dev.us-east.modal.direct   # e.g. a `modal serve` URL
+Usage::
+
+    make chat                                                    # interactive chat
+    uv run --env-file .env python -m client.chat "Explain SVD"   # one question, then exit
+    uv run --env-file .env python -m client.chat --url https://...-dev.us-east.modal.direct
+
+The server speaks the OpenAI API, so this client uses the official ``openai``
+SDK with ``base_url`` pointed at the server instead of at api.openai.com.
 """
 
 import argparse
@@ -12,66 +17,135 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
-from pathlib import Path
+from typing import Literal
 
 import modal
-import yaml
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessageParam
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "vllm-inference.yaml"
-CONFIG = yaml.safe_load(CONFIG_PATH.read_text())
+from server.config import CONFIG
+
+# Message list in the OpenAI chat format: [{"role": ..., "content": ...}, ...].
+Messages = list[ChatCompletionMessageParam]
+
+# ANSI escape codes: gray text for the model's thinking, then back to normal.
 GRAY, RESET = "\033[90m", "\033[0m"
 
 
-def server_url(url: str | None) -> str:
-    if url:
-        return url.rstrip("/")
-    app_name = CONFIG["modal_app_name"]
-    found = modal.Server.from_name(app_name, "Server").get_url()
-    if not found:
-        sys.exit(f"No deployed server found for app '{app_name}'. Run `make deploy` or pass --url.")
-    return found.rstrip("/")
+def connect(url: str | None = None) -> OpenAI:
+    """Find the server, wait until it has booted, and return an authenticated client.
+
+    Args:
+        url: Server base URL, e.g. from ``modal serve``. If ``None``, the URL of
+            the deployed app is looked up on Modal.
+
+    Returns:
+        An ``OpenAI`` client whose requests go to the vLLM server.
+
+    Exits:
+        If ``VLLM_API_KEY`` is not set, if no deployed app exists, or if the
+        server does not boot in time. These are setup errors for a person to
+        fix, so a short message is clearer than a traceback.
+    """
+    api_key = os.environ.get("VLLM_API_KEY")
+    if not api_key:
+        sys.exit(
+            "VLLM_API_KEY is not set. Run `make api-key` and use the make targets."
+        )
+    url = (url or deployed_url()).rstrip("/")
+    wait_until_ready(url)
+    # The SDK sends the key as `Authorization: Bearer <key>` on every request.
+    # vLLM serves the OpenAI routes under /v1, as OpenAI does.
+    return OpenAI(base_url=f"{url}/v1", api_key=api_key)
+
+
+def deployed_url() -> str:
+    """Return the public URL of the deployed ``Server``, or exit if there is none."""
+    server = modal.Server.from_name(CONFIG["modal_app_name"], "Server")
+    url = server.get_url()
+    if not url:
+        sys.exit("No deployed server found. Run `make deploy` or pass --url.")
+    return url
 
 
 def wait_until_ready(url: str, timeout: float = 15 * 60) -> None:
-    # Modal answers 503 until a container has booted (a cold start takes a few minutes).
+    """Block until ``GET /health`` returns 200, printing a dot per attempt.
+
+    Any request to the URL makes Modal start a container if none is running.
+    Until vLLM listens on its port, Modal answers 503. A cold start takes a
+    few minutes: load the weights, compile, capture CUDA graphs.
+
+    Args:
+        url: Server base URL, without a trailing slash.
+        timeout: Seconds to wait before giving up. Must cover a cold start.
+    """
     deadline = time.time() + timeout
     print(f"Waiting for {url} ...", end="", flush=True)
     while time.time() < deadline:
         try:
+            # urlopen raises HTTPError (a URLError subclass) on any non-2xx status.
             with urllib.request.urlopen(f"{url}/health", timeout=60):
-                print(" ready.")  # urlopen raises on any non-2xx status
+                print(" ready.")
                 return
         except (urllib.error.URLError, TimeoutError):
-            pass
-        print(".", end="", flush=True)
-        time.sleep(2)
+            print(".", end="", flush=True)
+            time.sleep(2)
     sys.exit("\nServer did not become ready in time.")
 
 
-def stream_reply(client: OpenAI, messages: list[dict], thinking: bool) -> Iterator[tuple[str, str]]:
-    """Yield ("reasoning" | "content", text) pieces as the server streams them."""
+def stream_reply(
+    client: OpenAI, messages: Messages, thinking: bool
+) -> Iterator[tuple[Literal["reasoning", "content"], str]]:
+    """Send a chat request and yield the reply piece by piece as it streams in.
+
+    Args:
+        client: Client returned by ``connect``.
+        messages: Conversation so far, ending with the user's message.
+        thinking: Whether the model reasons before it answers. Off is faster.
+
+    Yields:
+        ``("reasoning", text)`` for the model's thinking and ``("content", text)``
+        for the answer. Each piece is a few tokens long.
+    """
     stream = client.chat.completions.create(
-        model=CONFIG["model_name"],  # must match --served-model-name
+        # Must match `--served-model-name` on the server.
+        model=CONFIG["model_name"],
         messages=messages,
         stream=True,
+        # Fields outside the OpenAI API go in `extra_body`. vLLM passes
+        # `chat_template_kwargs` to Gemma's chat template, which reads
+        # `enable_thinking`.
         extra_body={"chat_template_kwargs": {"enable_thinking": thinking}},
     )
     for chunk in stream:
+        # Some chunks (e.g. a final usage report) carry no choices.
         if not chunk.choices:
             continue
         delta = chunk.choices[0].delta
-        # vLLM sends the model's thinking in a non-standard `reasoning` field
-        reasoning = getattr(delta, "reasoning", None) or getattr(delta, "reasoning_content", None)
+        # vLLM sends the thinking in a field the OpenAI SDK does not declare.
+        # Its name depends on the vLLM version, so check both.
+        reasoning = getattr(delta, "reasoning", None) or getattr(
+            delta, "reasoning_content", None
+        )
         if reasoning:
             yield "reasoning", reasoning
         if delta.content:
             yield "content", delta.content
 
 
-def ask(client: OpenAI, messages: list[dict], thinking: bool) -> str:
-    """Print the reply as it streams (thinking in gray) and return the final answer."""
-    answer = []
+def ask(client: OpenAI, messages: Messages, thinking: bool = True) -> str:
+    """Print the reply as it streams, thinking in gray, and return only the answer.
+
+    Args:
+        client: Client returned by ``connect``.
+        messages: Conversation so far, ending with the user's message.
+        thinking: Whether the model reasons before it answers.
+
+    Returns:
+        The answer text, without the thinking. This is what goes back into the
+        chat history.
+    """
+    answer: list[str] = []
     for kind, text in stream_reply(client, messages, thinking):
         if kind == "reasoning":
             print(f"{GRAY}{text}{RESET}", end="", flush=True)
@@ -82,35 +156,35 @@ def ask(client: OpenAI, messages: list[dict], thinking: bool) -> str:
     return "".join(answer)
 
 
-def connect(url: str | None = None) -> OpenAI:
-    """Find the server, wait for it to boot, and return an authenticated OpenAI client."""
-    api_key = os.environ.get("VLLM_API_KEY")
-    if not api_key:
-        sys.exit("VLLM_API_KEY is not set. Run `make api-key`, then use the make targets.")
-    url = server_url(url)
-    wait_until_ready(url)
-    return OpenAI(base_url=f"{url}/v1", api_key=api_key)  # sent as `Authorization: Bearer <key>`
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("prompt", nargs="?", help="ask one question and exit; omit for interactive chat") # postionally required argument
+    """Parse the command line, then ask one question or run an interactive chat."""
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "prompt", nargs="?", help="ask one question and exit; omit for interactive chat"
+    )
     parser.add_argument("--url", help="server URL (default: look up the deployed app)")
-    parser.add_argument("--system", default="You are a helpful assistant.", help="system prompt")
-    parser.add_argument("--no-thinking", action="store_true", help="skip the model's reasoning step")
+    parser.add_argument(
+        "--system", default="You are a helpful assistant.", help="system prompt"
+    )
+    parser.add_argument(
+        "--thinking",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="let the model reason before it answers",
+    )
     args = parser.parse_args()
 
     client = connect(args.url)
-
-    messages = [{"role": "system", "content": args.system}]
-    thinking = not args.no_thinking
+    messages: Messages = [{"role": "system", "content": args.system}]
 
     if args.prompt:
         messages.append({"role": "user", "content": args.prompt})
-        ask(client, messages, thinking)
+        ask(client, messages, args.thinking)
         return
 
-    print("Chat started. Empty line or Ctrl+D to quit. Thinking shown in gray.")
+    print("Chat started. Empty line or Ctrl+D to quit. Thinking is shown in gray.")
     while True:
         try:
             user = input("\nyou> ").strip()
@@ -120,8 +194,10 @@ def main() -> None:
             break
         messages.append({"role": "user", "content": user})
         print("llm> ", end="")
-        # keep only the final answer in history; the thinking is not sent back
-        messages.append({"role": "assistant", "content": ask(client, messages, thinking)})
+        # The model is stateless: every request resends the whole conversation.
+        # Only the answer goes into the history; the thinking is not sent back.
+        answer = ask(client, messages, args.thinking)
+        messages.append({"role": "assistant", "content": answer})
 
 
 if __name__ == "__main__":
