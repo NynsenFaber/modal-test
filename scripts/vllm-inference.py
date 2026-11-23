@@ -27,6 +27,7 @@
 # vLLM can be installed with `uv pip`, since Modal [provides the CUDA drivers](https://modal.com/docs/guide/cuda).
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -176,8 +177,13 @@ def download():
     port=VLLM_PORT,
     routing_region=ROUTING_REGION,
     target_concurrency=100,  # how many requests can one replica handle? tune carefully!
-    unauthenticated=True,  # to make the endpoint publicly accessible
-    secrets=[modal.Secret.from_name("huggingface-secret")]
+    unauthenticated=True,  # no Modal auth; vLLM checks the API key instead
+    # vLLM reads VLLM_API_KEY from the environment and then requires
+    # `Authorization: Bearer <key>` on /v1/* routes (/health stays open).
+    secrets=[
+        modal.Secret.from_name("huggingface-secret"),
+        modal.Secret.from_name("vllm-api-key"),
+    ],
 )
 class Server:
     @modal.enter()
@@ -192,7 +198,6 @@ class Server:
             MODEL_REVISION,
             "--served-model-name",
             MODEL_NAME,
-            "llm",
             "--host",
             "0.0.0.0",
             "--port",
@@ -294,8 +299,10 @@ async def test(test_timeout=15 * MINUTES, content=None, twice=True):
     import asyncio
     import time
 
+    # Get the URL of the Modal server.
     url = await Server.get_url.aio()
 
+    # OpenAI API requests
     system_prompt = {
         "role": "system",
         "content": "You are a pirate who can't help but drop sly reminders that he went to Harvard.",
@@ -308,31 +315,34 @@ async def test(test_timeout=15 * MINUTES, content=None, twice=True):
         {"role": "user", "content": content},
     ]
 
-    async with aiohttp.ClientSession(base_url=url) as session:
+    # Open an HTTP session to the server and send requests to it.
+    # Same key the server got from the `vllm-api-key` Modal Secret (see `make api-key`).
+    auth = {"Authorization": f"Bearer {os.environ['VLLM_API_KEY']}"} # Bearer token auth for vLLM
+    async with aiohttp.ClientSession(base_url=url, headers=auth) as session:
         print(f"Running health check for server at {url}")
         deadline = time.time() + test_timeout - 1 * MINUTES
         while time.time() < deadline:
+            # Send GET request to the /health endpoint (provided by vLLM) to check if the server is up and running.
             async with session.get(
                 "/health", timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 if resp.status == 200:
                     break
                 if resp.status == 503:
+                    # retry after 1 second if the server is not ready yet.
                     await asyncio.sleep(1)
                     continue
                 assert False, (
                     f"Failed health check for server at {url}: HTTP {resp.status}"
                 )
-        else:
-            assert False, f"Failed health check for server at {url}"
         print(f"Successful health check for server at {url}")
 
         print(f"Sending messages to {url}:", *messages, sep="\n\t")
-        await _send_request(session, "llm", messages)
+        await _send_request(session, MODEL_NAME, messages)
         if twice:
             messages[0]["content"] = "You are Jar Jar Binks."
             print(f"Sending messages to {url}:", *messages, sep="\n\t")
-            await _send_request(session, "llm", messages)
+            await _send_request(session, MODEL_NAME, messages)
 
 
 async def _send_request(
@@ -345,6 +355,7 @@ async def _send_request(
 
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
 
+    # Send a POST request to the /v1/chat/completions endpoint of the server with the payload and headers.
     async with session.post(
         "/v1/chat/completions", json=payload, headers=headers
     ) as resp:
