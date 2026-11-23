@@ -1,0 +1,9 @@
+[project]
+name = "modal-test"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.14.5",
+    "modal>=1.6.4",
+    "pyyaml>=6.0.4",
+]
