@@ -7,3 +7,8 @@ dependencies = [
     "modal>=1.6.4",
     "pyyaml>=6.0.4",
 ]
+
+[dependency-groups]
+dev = [
+    "huggingface-hub>=2.4.0",
+]

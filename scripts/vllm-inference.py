@@ -148,6 +148,22 @@ VLLM_PORT = config["vllm_port"]
 ROUTING_REGION = config["routing_region"]
 
 
+# Download the weights once, on CPU and with a long timeout, so server boots
+# only read them from the Volume. Run with `make download`.
+@app.function(
+    image=vllm_image,
+    volumes={"/root/.cache/huggingface": hf_cache_vol},
+    secrets=[modal.Secret.from_name("huggingface-secret")],
+    timeout=60 * MINUTES,
+)
+def download():
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(MODEL_NAME, revision=MODEL_REVISION)
+    snapshot_download(SPECULATIVE_MODEL_NAME, revision=SPECULATIVE_MODEL_REVISION)
+    hf_cache_vol.commit()
+
+
 @app.server(
     image=vllm_image,
     gpu=f"{GPU}:{N_GPU}",

@@ -1,7 +1,10 @@
 APP := example-vllm-inference
 SCRIPT := scripts/vllm-inference.py
 
-.PHONY: deploy serve remove
+.PHONY: download deploy serve remove
+
+download:
+	uv run modal run $(SCRIPT)::download
 
 deploy:
 	uv run modal deploy $(SCRIPT)
