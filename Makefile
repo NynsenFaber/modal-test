@@ -1,7 +1,7 @@
 APP := example-vllm-inference
 SERVER := server/vllm_inference.py
 
-.PHONY: api-key download deploy serve test remove chat
+.PHONY: api-key download deploy serve test remove chat ui
 
 # Create VLLM_API_KEY in .env (once) and push it to the `vllm-api-key` Modal Secret.
 api-key:
@@ -25,3 +25,6 @@ remove:
 
 chat:
 	uv run --env-file .env python client/chat.py
+
+ui:
+	uv run --env-file .env python -m client.ui

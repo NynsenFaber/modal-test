@@ -11,6 +11,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 
 import modal
@@ -48,14 +49,14 @@ def wait_until_ready(url: str, timeout: float = 15 * 60) -> None:
     sys.exit("\nServer did not become ready in time.")
 
 
-def ask(client: OpenAI, messages: list[dict], thinking: bool) -> str:
+def stream_reply(client: OpenAI, messages: list[dict], thinking: bool) -> Iterator[tuple[str, str]]:
+    """Yield ("reasoning" | "content", text) pieces as the server streams them."""
     stream = client.chat.completions.create(
         model=CONFIG["model_name"],  # must match --served-model-name
         messages=messages,
         stream=True,
         extra_body={"chat_template_kwargs": {"enable_thinking": thinking}},
     )
-    answer = []
     for chunk in stream:
         if not chunk.choices:
             continue
@@ -63,12 +64,32 @@ def ask(client: OpenAI, messages: list[dict], thinking: bool) -> str:
         # vLLM sends the model's thinking in a non-standard `reasoning` field
         reasoning = getattr(delta, "reasoning", None) or getattr(delta, "reasoning_content", None)
         if reasoning:
-            print(f"{GRAY}{reasoning}{RESET}", end="", flush=True)
+            yield "reasoning", reasoning
         if delta.content:
-            answer.append(delta.content)
-            print(delta.content, end="", flush=True)
+            yield "content", delta.content
+
+
+def ask(client: OpenAI, messages: list[dict], thinking: bool) -> str:
+    """Print the reply as it streams (thinking in gray) and return the final answer."""
+    answer = []
+    for kind, text in stream_reply(client, messages, thinking):
+        if kind == "reasoning":
+            print(f"{GRAY}{text}{RESET}", end="", flush=True)
+        else:
+            answer.append(text)
+            print(text, end="", flush=True)
     print()
     return "".join(answer)
+
+
+def connect(url: str | None = None) -> OpenAI:
+    """Find the server, wait for it to boot, and return an authenticated OpenAI client."""
+    api_key = os.environ.get("VLLM_API_KEY")
+    if not api_key:
+        sys.exit("VLLM_API_KEY is not set. Run `make api-key`, then use the make targets.")
+    url = server_url(url)
+    wait_until_ready(url)
+    return OpenAI(base_url=f"{url}/v1", api_key=api_key)  # sent as `Authorization: Bearer <key>`
 
 
 def main() -> None:
@@ -79,13 +100,7 @@ def main() -> None:
     parser.add_argument("--no-thinking", action="store_true", help="skip the model's reasoning step")
     args = parser.parse_args()
 
-    api_key = os.environ.get("VLLM_API_KEY")
-    if not api_key:
-        sys.exit("VLLM_API_KEY is not set. Run `make api-key`, then use `make chat`.")
-
-    url = server_url(args.url)
-    wait_until_ready(url)
-    client = OpenAI(base_url=f"{url}/v1", api_key=api_key)  # sent as `Authorization: Bearer <key>`
+    client = connect(args.url)
 
     messages = [{"role": "system", "content": args.system}]
     thinking = not args.no_thinking
