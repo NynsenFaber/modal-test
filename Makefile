@@ -1,5 +1,5 @@
 APP := example-vllm-inference
-SCRIPT := scripts/vllm-inference.py
+SERVER := server/vllm_inference.py
 
 .PHONY: api-key download deploy serve test remove chat
 
@@ -9,19 +9,19 @@ api-key:
 	@uv run modal secret create vllm-api-key VLLM_API_KEY=$$(grep '^VLLM_API_KEY=' .env | cut -d= -f2) --force
 
 download:
-	uv run modal run $(SCRIPT)::download
+	uv run modal run $(SERVER)::download
 
 deploy:
-	uv run modal deploy $(SCRIPT)
+	uv run modal deploy $(SERVER)
 
 serve:
-	uv run modal serve $(SCRIPT)
+	uv run modal serve $(SERVER)
 
 test:
-	uv run --env-file .env modal run $(SCRIPT)
+	uv run --env-file .env modal run -m tests.smoke_test
 
 remove:
 	uv run modal app stop $(APP)
 
 chat:
-	uv run --env-file .env python scripts/chat.py
+	uv run --env-file .env python client/chat.py

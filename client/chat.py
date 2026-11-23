@@ -1,8 +1,8 @@
 """Chat with the deployed vLLM server through the OpenAI SDK.
 
-    uv run python scripts/chat.py                      # interactive chat
-    uv run python scripts/chat.py "Explain SVD"        # one question, then exit
-    uv run python scripts/chat.py --url https://...-dev.us-east.modal.direct   # e.g. a `modal serve` URL
+    uv run python client/chat.py                      # interactive chat
+    uv run python client/chat.py "Explain SVD"        # one question, then exit
+    uv run python client/chat.py --url https://...-dev.us-east.modal.direct   # e.g. a `modal serve` URL
 """
 
 import argparse

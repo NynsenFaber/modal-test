@@ -1,7 +1,3 @@
-# ---
-# pytest: false
-# ---
-
 # # Run OpenAI-compatible LLM inference with Gemma and vLLM
 
 # In this example, we show how to run a vLLM server in OpenAI-compatible mode on Modal.
@@ -27,11 +23,8 @@
 # vLLM can be installed with `uv pip`, since Modal [provides the CUDA drivers](https://modal.com/docs/guide/cuda).
 
 import json
-import os
 from pathlib import Path
-from typing import Any
 
-import aiohttp
 import modal
 import yaml
 
@@ -249,145 +242,11 @@ class Server:
 
 # ## Deploy the server
 
-# To deploy the API on Modal, just run
 # ```bash
-# modal deploy vllm_inference.py
+# make deploy        # = modal deploy server/vllm_inference.py
 # ```
-
-# This will create a new app on Modal, build the container image for it if it hasn't been built yet,
-# and deploy the app.
 
 # ## Interact with the server
 
-# Once it is deployed, you'll see a URL appear in the command line,
-# something like `https://your-workspace-name--example-vllm-inference-server.us-east.modal.direct`.
-
-# To interact with the API programmatically in Python, we recommend the `openai` library.
-
-# See the `client.py` script in the examples repository
-# [here](https://github.com/modal-labs/modal-examples/tree/main/06_gpu_and_ml/llm-serving/openai_compatible)
-# to take it for a spin:
-
-# ```bash
-# # pip install openai==1.76.0
-# python openai_compatible/client.py
-# ```
-
-
-# ## Testing the server
-
-# To make it easier to test the server setup, we also include a `local_entrypoint`
-# that does a healthcheck and then hits the server. As opposed to Modal Functions, however
-# when a Server has no active containers, requests will be rejected with a 503 Service Unavailable status.
-# Therefore, we have to handle this manually in the client code.
-
-# If you execute the command
-
-# ```bash
-# modal run vllm_inference.py
-# ```
-
-# a fresh replica of the server will be spun up on Modal while
-# the code below executes on your local machine.
-
-# Think of this like writing simple tests inside of the `if __name__ == "__main__"`
-# block of a Python script, but for cloud deployments!
-
-
-@app.local_entrypoint()
-async def test(test_timeout=15 * MINUTES, content=None, twice=True):
-    import asyncio
-    import time
-
-    # Get the URL of the Modal server.
-    url = await Server.get_url.aio()
-
-    # OpenAI API requests
-    system_prompt = {
-        "role": "system",
-        "content": "You are a pirate who can't help but drop sly reminders that he went to Harvard.",
-    }
-    if content is None:
-        content = "Explain the singular value decomposition."
-
-    messages = [  # OpenAI chat format
-        system_prompt,
-        {"role": "user", "content": content},
-    ]
-
-    # Open an HTTP session to the server and send requests to it.
-    # Same key the server got from the `vllm-api-key` Modal Secret (see `make api-key`).
-    auth = {"Authorization": f"Bearer {os.environ['VLLM_API_KEY']}"} # Bearer token auth for vLLM
-    async with aiohttp.ClientSession(base_url=url, headers=auth) as session:
-        print(f"Running health check for server at {url}")
-        deadline = time.time() + test_timeout - 1 * MINUTES
-        while time.time() < deadline:
-            # Send GET request to the /health endpoint (provided by vLLM) to check if the server is up and running.
-            async with session.get(
-                "/health", timeout=aiohttp.ClientTimeout(total=60)
-            ) as resp:
-                if resp.status == 200:
-                    break
-                if resp.status == 503:
-                    # retry after 1 second if the server is not ready yet.
-                    await asyncio.sleep(1)
-                    continue
-                assert False, (
-                    f"Failed health check for server at {url}: HTTP {resp.status}"
-                )
-        print(f"Successful health check for server at {url}")
-
-        print(f"Sending messages to {url}:", *messages, sep="\n\t")
-        await _send_request(session, MODEL_NAME, messages)
-        if twice:
-            messages[0]["content"] = "You are Jar Jar Binks."
-            print(f"Sending messages to {url}:", *messages, sep="\n\t")
-            await _send_request(session, MODEL_NAME, messages)
-
-
-async def _send_request(
-    session: aiohttp.ClientSession, model: str, messages: list
-) -> None:
-    # `stream=True` tells an OpenAI-compatible backend to stream chunks
-    payload: dict[str, Any] = {"messages": messages, "model": model, "stream": True}
-    # explicitly enable thinking for this model
-    payload["chat_template_kwargs"] = {"enable_thinking": True}
-
-    headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
-
-    # Send a POST request to the /v1/chat/completions endpoint of the server with the payload and headers.
-    async with session.post(
-        "/v1/chat/completions", json=payload, headers=headers
-    ) as resp:
-        async for raw in resp.content:
-            resp.raise_for_status()
-            # extract new content and stream it
-            line = raw.decode().strip()
-            if not line or line == "data: [DONE]":
-                continue
-            if line.startswith("data: "):  # SSE prefix
-                line = line[len("data: ") :]
-
-            chunk = json.loads(line)
-            assert (
-                chunk["object"] == "chat.completion.chunk"
-            )  # or something went horribly wrong
-            delta = chunk["choices"][0]["delta"]
-            content = (
-                delta.get("content")
-                or delta.get("reasoning")
-                or delta.get("reasoning_content")
-            )
-            if content:
-                print(content, end="")
-            else:
-                print("\n", chunk)
-    print()
-
-
-# We also include a basic example of a load-testing setup using
-# `locust` in the `load_test.py` script [here](https://github.com/modal-labs/modal-examples/tree/main/06_gpu_and_ml/llm-serving/openai_compatible):
-
-# ```bash
-# modal run openai_compatible/load_test.py
-# ```
+# Chat with it through the OpenAI SDK with `make chat` (see `client/chat.py`).
+# Smoke-test a temporary copy of the server with `make test` (see `tests/smoke_test.py`).
