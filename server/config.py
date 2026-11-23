@@ -1,27 +1,13 @@
-"""Load ``config/vllm-inference.yaml``, the single source of settings.
+"""All settings for the server, the clients and the smoke test. Edit them here.
 
-The server, the clients and the smoke test all import ``CONFIG`` from here, so a
-setting is changed in one place only.
-
-The file is read from two places:
-
-* Locally (``modal deploy``, ``make chat``, ...) it is read from the repo.
-* Inside the Modal container it is read from the copy that
-  ``server/vllm_inference.py`` bakes into the image at ``REMOTE_PATH``.
-  The container has no access to your local disk, so it needs its own copy.
 """
 
-from pathlib import Path
-from typing import TypedDict, cast
-
-import modal
-import yaml
+from dataclasses import dataclass
 
 
-class Config(TypedDict):
-    """Shape of the YAML file. Keep in sync with ``config/vllm-inference.yaml``."""
-
-    # Name of the Modal app. Also used by clients to find the deployed server.
+@dataclass(frozen=True)  # frozen: settings cannot be changed while the program runs
+class Config:
+    # Name of the Modal app. Clients also use it to find the deployed server.
     modal_app_name: str
     # Hugging Face repo id of the model, and the exact commit to load.
     # Pinning the revision keeps a repo update from changing the server silently.
@@ -41,32 +27,15 @@ class Config(TypedDict):
     routing_region: str
 
 
-LOCAL_PATH = Path(__file__).resolve().parents[1] / "config" / "vllm-inference.yaml"
-REMOTE_PATH = "/root/config/vllm-inference.yaml"
-
-
-def load_config(path: Path) -> Config:
-    """Read the YAML file and check that every key in ``Config`` is present.
-
-    Args:
-        path: Location of the YAML file.
-
-    Returns:
-        The parsed settings.
-
-    Raises:
-        KeyError: If the file is missing one or more required keys. Failing
-            here gives a clear message, instead of a ``KeyError`` deep inside
-            the server after a multi-minute container boot.
-    """
-    data = yaml.safe_load(path.read_text())
-    missing = Config.__required_keys__ - data.keys()
-    if missing:
-        raise KeyError(f"{path} is missing keys: {sorted(missing)}")
-    # The key check above makes this cast safe for presence. Value types are
-    # trusted to match the YAML; mypy cannot check the contents of a file.
-    return cast(Config, data)
-
-
-# `modal.is_local()` is True on your machine and False inside a Modal container.
-CONFIG = load_config(LOCAL_PATH if modal.is_local() else Path(REMOTE_PATH))
+CONFIG = Config(
+    modal_app_name="example-vllm-inference",
+    model_name="google/gemma-4-26B-A4B-it",
+    model_revision="47b6801b24d15ff9bcd8c96dfaea0be9ed3a0301",
+    speculative_model_name="google/gemma-4-26B-A4B-it-assistant",
+    speculative_model_revision="f188f476dc11dd5bb3014dc861529d316bce49d3",
+    fast_boot=False,
+    gpu_type="A100-80GB",
+    n_gpu=1,
+    vllm_port=8000,
+    routing_region="us-east",
+)

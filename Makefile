@@ -1,6 +1,6 @@
 # All commands run from the repo root, as modules (-m), so `server` and `client` import each other.
 # Commands that call the server load VLLM_API_KEY from .env.
-APP := $(shell grep '^modal_app_name:' config/vllm-inference.yaml | cut -d' ' -f2)
+APP := $(shell uv run python -c "from server.config import CONFIG; print(CONFIG.modal_app_name)")
 SERVER := -m server.vllm_inference
 RUN := uv run --env-file .env
 

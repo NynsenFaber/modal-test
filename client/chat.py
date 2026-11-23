@@ -61,7 +61,7 @@ def connect(url: str | None = None) -> OpenAI:
 
 def deployed_url() -> str:
     """Return the public URL of the deployed ``Server``, or exit if there is none."""
-    server = modal.Server.from_name(CONFIG["modal_app_name"], "Server")
+    server = modal.Server.from_name(CONFIG.modal_app_name, "Server")
     url = server.get_url()
     if not url:
         sys.exit("No deployed server found. Run `make deploy` or pass --url.")
@@ -109,7 +109,7 @@ def stream_reply(
     """
     stream = client.chat.completions.create(
         # Must match `--served-model-name` on the server.
-        model=CONFIG["model_name"],
+        model=CONFIG.model_name,
         messages=messages,
         stream=True,
         # Fields outside the OpenAI API go in `extra_body`. vLLM passes

@@ -1,10 +1,9 @@
 # vLLM on Modal
 
-Serve Gemma 4 (26B-A4B) as an OpenAI-compatible API on a Modal GPU, and chat with it from the terminal or a browser.
+Serve Gemma 4 (26B-A4B) as an OpenAI-compatible API on a Modal GPU (A100-80GB), and chat with it from the terminal or a browser.
 
 ```
-config/vllm-inference.yaml   all settings: model, GPU, app name, region
-server/config.py             loads the YAML (locally and inside the container)
+server/config.py             all settings: model, GPU, app name, region
 server/vllm_inference.py     Modal app: image, weight download, vLLM server
 client/chat.py               terminal chat + shared client helpers
 client/ui.py                 Gradio browser chat
@@ -29,7 +28,6 @@ tests/smoke_test.py          starts a temporary server and checks that it answer
 | `make test` | Smoke test on a temporary GPU server. |
 | `make serve` | Dev copy that reloads on code changes. Pass its URL with `--url`. |
 | `make remove` | Stop the deployed app. |
-| `make check` | Lint (ruff), format check and type check (mypy, strict). No GPU needed. |
 
 The first request after 15 idle minutes waits for a cold start (about 3 minutes).
 The GPU is billed while a container runs, including those 15 idle minutes.

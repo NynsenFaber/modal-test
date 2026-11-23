@@ -100,7 +100,7 @@ def build_ui(client: OpenAI) -> gr.ChatInterface:
 
     return gr.ChatInterface(
         respond,
-        title=CONFIG["model_name"],
+        title=CONFIG.model_name,
         description="Served by vLLM on Modal.",
         # Extra controls, passed to `respond` in this order after `history`.
         additional_inputs=[

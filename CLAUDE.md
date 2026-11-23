@@ -28,11 +28,11 @@ All go through the Makefile (`uv run ...` under the hood):
 
 No unit-test suite is configured. `make test` is the only test and it requires Modal credentials and a GPU.
 Run always `ruff format` after any change, this is our linter. Then run `make check`; it must pass.
-`server/config.py` types the YAML as the `Config` TypedDict and fails fast on missing keys, so add any new YAML key there too.
+Settings live in `server/config.py` as a frozen dataclass `Config` and one `CONFIG` instance; mypy checks their types. Read them as attributes: `CONFIG.model_name`.
 
 ## Architecture
 
-- **Single source of config:** `config/vllm-inference.yaml` (app name, model + pinned revisions, GPU type/count, port, region, `fast_boot`). The server reads it locally and also bakes it into the image at `/root/vllm-inference.yaml`, choosing the path via `modal.is_local()`. Clients read the same file for the app name and model name. Change models/GPUs here, not in code.
+- **Single source of config:** `server/config.py` (app name, model + pinned revisions, GPU type/count, port, region, `fast_boot`). The container imports the same file, because Modal ships the `server` package. Change models/GPUs there.
 - **Server (`server/vllm_inference.py`):** a Modal `@app.server` class whose `@modal.enter()` launches `vllm serve` as a subprocess. vLLM CLI flags (tool/reasoning parsers `gemma4`, speculative config, multimodal disabled, `--enforce-eager` when `fast_boot`) are built there. Two Modal Volumes cache HF weights and vLLM compile artifacts.
 - **Auth:** the endpoint is `unauthenticated=True` at the Modal layer; vLLM itself enforces `Authorization: Bearer $VLLM_API_KEY` on `/v1/*` (`/health` stays open). Local commands get the key through `uv run --env-file .env`.
 - **Clients:** `client/chat.py` holds the shared logic (`connect`, `server_url`, `wait_until_ready`, `stream_reply`, `ask`). `client/ui.py` and `tests/smoke_test.py` import from it, so run them as modules (`python -m client.ui`, `modal run -m tests.smoke_test`) to keep the repo root on `sys.path`.

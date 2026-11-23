@@ -6,7 +6,6 @@ dependencies = [
     "gradio>=6.32.0",
     "modal>=1.6.4",
     "openai>=3.58.0",
-    "pyyaml>=6.0.4",
 ]
 
 [dependency-groups]
@@ -14,7 +13,6 @@ dev = [
     "huggingface-hub>=2.4.0",
     "mypy>=2.4.1",
     "ruff>=0.17.6",
-    "types-pyyaml>=6.0.12.20261122",
 ]
 
 [tool.mypy]

@@ -7,14 +7,14 @@ Usage::
 
 How it works:
 
-1. ``image`` defines the container: CUDA, vLLM and the config file.
+1. ``image`` defines the container: CUDA and vLLM.
 2. ``download`` fills the ``huggingface-cache`` Volume with the model weights,
    so that server boots read the weights from the Volume and download nothing.
 3. ``Server`` starts ``vllm serve`` as a subprocess when a container boots.
    Modal forwards HTTP traffic to vLLM's port once the port is open. Until then
    Modal answers 503.
 
-Settings come from ``config/vllm-inference.yaml`` (see ``server/config.py``).
+Settings come from ``server/config.py``.
 Based on Modal's vLLM example: https://modal.com/docs/examples/vllm_inference
 """
 
@@ -23,11 +23,11 @@ import subprocess
 
 import modal
 
-from server.config import CONFIG, LOCAL_PATH, REMOTE_PATH
+from server.config import CONFIG
 
 MINUTES = 60  # seconds; Modal timeouts are given in seconds
 
-app = modal.App(CONFIG["modal_app_name"])
+app = modal.App(CONFIG.modal_app_name)
 
 # --- Container image ----------------------------------------------------------
 # The CUDA "devel" image provides the CUDA toolkit that vLLM's kernels need.
@@ -46,9 +46,6 @@ image = (
             "VLLM_LOG_STATS_INTERVAL": "1",
         }
     )
-    # The container cannot read your disk, so copy the config into the image.
-    # This must be the last step: Modal adds local files at container start.
-    .add_local_file(LOCAL_PATH, REMOTE_PATH)
 )
 
 # --- Storage ------------------------------------------------------------------
@@ -85,10 +82,10 @@ def download() -> None:
     # not on your machine.
     from huggingface_hub import snapshot_download
 
-    snapshot_download(CONFIG["model_name"], revision=CONFIG["model_revision"])
+    snapshot_download(CONFIG.model_name, revision=CONFIG.model_revision)
     snapshot_download(
-        CONFIG["speculative_model_name"],
-        revision=CONFIG["speculative_model_revision"],
+        CONFIG.speculative_model_name,
+        revision=CONFIG.speculative_model_revision,
     )
     # Save the new files now. Otherwise the Volume is only saved at container exit.
     hf_cache.commit()
@@ -104,28 +101,28 @@ def vllm_command() -> list[str]:
         The command and its arguments, ready for ``subprocess.Popen``.
     """
     speculative_config = {
-        "model": CONFIG["speculative_model_name"],
-        "revision": CONFIG["speculative_model_revision"],
+        "model": CONFIG.speculative_model_name,
+        "revision": CONFIG.speculative_model_revision,
         # Tokens the draft model guesses per step. Later guesses are accepted
         # less often, so higher values give diminishing returns.
         "num_speculative_tokens": 4,
     }
     return [
-        "vllm", "serve", CONFIG["model_name"],
-        "--revision", CONFIG["model_revision"],
+        "vllm", "serve", CONFIG.model_name,
+        "--revision", CONFIG.model_revision,
         # Clients must send this exact name as `model` in their requests.
-        "--served-model-name", CONFIG["model_name"],
+        "--served-model-name", CONFIG.model_name,
         # Listen on all interfaces so Modal's proxy can reach the server.
         "--host", "0.0.0.0",
-        "--port", str(CONFIG["vllm_port"]),
+        "--port", str(CONFIG.vllm_port),
         "--uvicorn-log-level=info",
         # Prepare the next batch on the CPU while the GPU runs the current one.
         "--async-scheduling",
         # Eager mode skips torch.compile and CUDA graphs: faster boot,
         # slower generation. Controlled by `fast_boot` in the config.
-        "--enforce-eager" if CONFIG["fast_boot"] else "--no-enforce-eager",
+        "--enforce-eager" if CONFIG.fast_boot else "--no-enforce-eager",
         # Split each layer across the GPUs of one container.
-        "--tensor-parallel-size", str(CONFIG["n_gpu"]),
+        "--tensor-parallel-size", str(CONFIG.n_gpu),
         # Text only: no image, video or audio input, which saves GPU memory.
         "--limit-mm-per-prompt", json.dumps({"image": 0, "video": 0, "audio": 0}),
         # Let the model decide when to call tools, and parse Gemma 4's
@@ -141,9 +138,9 @@ def vllm_command() -> list[str]:
 
 @app.server(
     image=image,
-    gpu=f"{CONFIG['gpu_type']}:{CONFIG['n_gpu']}",
-    port=CONFIG["vllm_port"],
-    routing_region=CONFIG["routing_region"],
+    gpu=f"{CONFIG.gpu_type}:{CONFIG.n_gpu}",
+    port=CONFIG.vllm_port,
+    routing_region=CONFIG.routing_region,
     volumes={HF_CACHE_DIR: hf_cache, VLLM_CACHE_DIR: vllm_cache},
     secrets=[hf_secret, api_key_secret],
     # Modal's own auth is off. Instead, VLLM_API_KEY makes vLLM require
