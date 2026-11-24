@@ -10,7 +10,7 @@ deployed one. The app stops when this function returns. Expect a cold start of
 a few minutes and the GPU cost of that time.
 
 What a pass proves: the image builds, vLLM boots with the configured flags,
-the API key is accepted, and the model streams a non-empty answer.
+the proxy token is accepted, and the model streams a non-empty answer.
 """
 
 from client.chat import ask, connect
@@ -33,7 +33,7 @@ def main(
     ``Server`` runs on Modal. Modal turns the parameters into CLI flags:
     ``--content``, and ``--twice`` / ``--no-twice``.
     """
-    # Server.get_url() is the temporary app's URL. If the API key is wrong,
+    # Server.get_url() is the temporary app's URL. If the proxy token is wrong,
     # the first request below fails with 401 AuthenticationError.
     # `@app.server` adds `get_url` at runtime, but Modal's type hints (1.6.4)
     # still describe the plain class, hence the ignore.

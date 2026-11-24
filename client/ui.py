@@ -16,7 +16,7 @@ from typing import Any
 import gradio as gr
 from openai import OpenAI
 
-from client.chat import Messages, connect, stream_reply
+from client.chat import ENGINES, Messages, connect, stream_reply
 from server.config import CONFIG
 
 # Title of the collapsible bubble that shows the model's thinking. Also used to
@@ -124,14 +124,17 @@ def main() -> None:
     )
     parser.add_argument("--url", help="server URL (default: look up the deployed app)")
     parser.add_argument(
+        "--engine", choices=ENGINES, default="vllm", help="which server to talk to"
+    )
+    parser.add_argument(
         "--share",
         action="store_true",
-        # The UI holds the API key, so a share link gives GPU access without it.
+        # The UI holds the proxy token, so a share link gives GPU access without it.
         help="create a public gradio.live link (anyone with it can use your GPU)",
     )
     args = parser.parse_args()
 
-    build_ui(connect(args.url)).launch(share=args.share, inbrowser=True)
+    build_ui(connect(args.url, args.engine)).launch(share=args.share, inbrowser=True)
 
 
 if __name__ == "__main__":

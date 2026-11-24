@@ -19,10 +19,15 @@ class Config:
     # Modal GPU type (e.g. "H200", "A100-80GB") and how many per container.
     gpu_type: str
     n_gpu: int
-    # Port vLLM listens on inside the container. Modal forwards traffic to it.
+    # Port vLLM (or SGLang) listens on inside the container. Modal forwards traffic to it.
     vllm_port: int
     # Modal region that receives requests (e.g. "us-east").
     routing_region: str
+    # Name of the second Modal app, which serves the same model with SGLang.
+    sglang_modal_app_name: str
+    # True: SGLang also uses the speculative (MTP) draft model, as vLLM does.
+    # Set to False if SGLang runs out of GPU memory with it on one GPU.
+    sglang_mtp: bool
 
 
 CONFIG = Config(
@@ -36,4 +41,6 @@ CONFIG = Config(
     n_gpu=1,
     vllm_port=8000,
     routing_region="us-east",
+    sglang_modal_app_name="example-sglang-inference",
+    sglang_mtp=True,
 )
