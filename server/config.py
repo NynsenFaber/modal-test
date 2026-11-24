@@ -1,6 +1,4 @@
-"""All settings for the server, the clients and the smoke test. Edit them here.
-
-"""
+"""All settings for the server, the clients and the smoke test. Edit them here."""
 
 from dataclasses import dataclass
 

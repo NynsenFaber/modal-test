@@ -115,13 +115,13 @@ def vllm_command() -> list[str]:
         # Listen on all interfaces so Modal's proxy can reach the server.
         "--host", "0.0.0.0",
         "--port", str(CONFIG.vllm_port),
-        "--uvicorn-log-level=info",
+        "--uvicorn-log-level=info", # vLLM logs go to the container logs, visible in Modal's dashboard
         # Prepare the next batch on the CPU while the GPU runs the current one.
         "--async-scheduling",
         # Eager mode skips torch.compile and CUDA graphs: faster boot,
         # slower generation. Controlled by `fast_boot` in the config.
         "--enforce-eager" if CONFIG.fast_boot else "--no-enforce-eager",
-        # Split each layer across the GPUs of one container.
+        # Number of GPUs to use. vLLM splits the model weights across them.
         "--tensor-parallel-size", str(CONFIG.n_gpu),
         # Text only: no image, video or audio input, which saves GPU memory.
         "--limit-mm-per-prompt", json.dumps({"image": 0, "video": 0, "audio": 0}),
@@ -133,7 +133,7 @@ def vllm_command() -> list[str]:
         # Speculative decoding: the draft model guesses several tokens, and the
         # big model checks them all in one step. Same output, fewer big steps.
         "--speculative-config", json.dumps(speculative_config),
-    ]  # fmt: skip
+    ]  
 
 
 @app.server(
