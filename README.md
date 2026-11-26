@@ -38,10 +38,78 @@ tests/smoke_test.py          starts a temporary server and checks that it answer
 The first request after 15 idle minutes waits for a cold start (about 3 minutes).
 The GPU is billed while a container runs, including those 15 idle minutes.
 
+## Gradio UI
+### 1. Deploy: weights and server
+
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "20px"}}}%%
+flowchart TB
+    HF["Hugging Face Hub"]
+    SEC["Secret<br/>HF_TOKEN"]
+    DL["gemma-weights app (CPU), download()"]
+    HFV[("Volume huggingface-cache<br/>Gemma + draft weights")]
+    VC[("Volume vllm-cache<br/>compile artifacts")]
+    CFG["server/config.py<br/>"]
+
+    subgraph VLLM["Server: vllm serve :8000 · OpenAI API /v1<br/>vLLM app · A100-80GB x1"]
+        DRAFT["MTP draft model<br/>4 speculative tokens"]
+        MAIN["Gemma 4 26B-A4B<br/>MoE, 4B active"]
+    end
+
+    HF -->|"make download<br/>(once)"| DL
+    SEC --> DL
+    DL --> HFV
+    HFV --> MAIN
+    HFV --> DRAFT
+    VC <--> VLLM
+    CFG -.-> VLLM
+    DRAFT -->|"guesses,<br/>main verifies"| MAIN
+
+    classDef gpu fill:#fff1e0,stroke:#d9822b,color:#5a2f00
+    classDef store fill:#eaf7ea,stroke:#3a9a3a,color:#0f3d0f
+    classDef sec fill:#fde8e8,stroke:#c43c3c,color:#5c0b0b
+    class MAIN,DRAFT gpu
+    style VLLM fill:#fff8ef,stroke:#d9822b,color:#5a2f00
+    class HFV,VC,DL store
+    class SEC sec
+```
+
+### 2. Chat: Gradio to Gemma
+
+```mermaid
+%%{init: {"themeVariables": {"fontSize": "20px"}}}%%
+flowchart TB
+    subgraph LOCAL["Laptop (no GPU)"]
+        UI["Gradio UI<br/>127.0.0.1:7860"]
+        CHAT["client/chat.py<br/>openai SDK"]
+        ENV[".env<br/>MODAL_PROXY_TOKEN"]
+    end
+
+    subgraph MODAL["Modal · us-east"]
+        PROXY{{"Proxy auth<br/>401 without token"}}
+        VLLM["vllm serve<br/>Gemma 4 + MTP"]
+    end
+
+    UI -->|"make ui"| CHAT
+    ENV --> CHAT
+    CHAT -->|"GET /health<br/>until 200"| PROXY
+    CHAT ==>|"POST /v1/chat/completions<br/>stream=True"| PROXY
+    PROXY ==> VLLM
+    VLLM -.->|"reasoning + content"| CHAT
+    CHAT -.->|"Thinking bubble<br/>+ answer"| UI
+
+    classDef local fill:#e8f1ff,stroke:#3b6fd8,color:#0b2a66
+    classDef gpu fill:#fff1e0,stroke:#d9822b,color:#5a2f00
+    classDef sec fill:#fde8e8,stroke:#c43c3c,color:#5c0b0b
+    class UI,CHAT,ENV local
+    class VLLM gpu
+    class PROXY sec
+```
+
 ## Benchmark: vLLM vs SGLang
 
 `make compare` sends the same load to both servers from a Modal CPU container in
-their region, at 1, 4, 16 and 64 concurrent requests, for two scenarios: chat
+their region, at 1, 4, 16 and 32 concurrent requests, for two scenarios: chat
 (~250 tokens in) and long-prompt (~4000 tokens in), 256 tokens out each.
 Thinking is off and every request generates exactly 256 tokens, so both engines
 do the same work.

@@ -69,9 +69,20 @@ def sglang_command() -> list[str]:
         "--max-running-requests", "100",
         # Prometheus metrics on /metrics.
         "--enable-metrics",
-        # Share of GPU memory for weights + KV cache. Leaves room for the draft
-        # model's activations and CUDA graphs on a single 80 GB GPU.
-        "--mem-fraction-static", "0.85",
+        # KV cache tuning. With the defaults, only ~27 long-prompt (4k token)
+        # requests fit and the rest queue (TTFT 33 s at 64 users).
+        # Share of GPU memory for weights + KV cache (default here was 0.85).
+        # After CUDA graphs, 0.85 still left ~10.7 GB unused on the A100.
+        "--mem-fraction-static", "0.9",
+        # Capture CUDA graphs up to 64 requests (the benchmark maximum)
+        # instead of 100: less graph memory, more KV cache.
+        "--cuda-graph-max-bs-decode", "32",
+        # Gemma 4 has many sliding-window (SWA) layers that only keep the last
+        # window of tokens per request, and few full-attention layers that keep
+        # all of them. The default 0.8 gave SWA layers 8x the memory of full
+        # layers (14 GB vs 1.7 GB) while long prompts ran out of full-layer
+        # tokens. 0.3 shifts memory to full layers: about 2x more tokens.
+        "--swa-full-tokens-ratio", "0.3",
     ]  # fmt: skip
     if CONFIG.fast_boot:
         # No CUDA graph capture: faster boot, slower generation.

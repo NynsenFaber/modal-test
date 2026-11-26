@@ -51,7 +51,7 @@ SLO_TPOT_S = 0.050
 # Scenario name -> (prompt length in words, output tokens).
 # "chat" is decode-heavy; "long-prompt" stresses prefill, so it shows in TTFT.
 SCENARIOS = {"chat": (200, 256), "long-prompt": (3000, 256)}
-CONCURRENCY = [1, 4, 16, 64]  # below target_concurrency=100: one container only
+CONCURRENCY = [1, 4, 16, 32]  # one container only (max_containers=1)
 
 # Report label -> engine key in client.chat.ENGINES (Modal app name).
 LABELS = {
@@ -136,7 +136,9 @@ async def run_load(
     client = openai.AsyncOpenAI(
         base_url=f"{url}/v1",
         api_key=os.environ["MODAL_PROXY_TOKEN"],  # sent as the Bearer token
-        timeout=10 * MINUTES,
+        # 256 tokens take < 30 s even at 32 users. A stream that hangs (seen once
+        # with SGLang at c=64) fails after 2 min instead of stalling the run.
+        timeout=2 * MINUTES,
         max_retries=0,  # a retry would hide an error and distort the timings
     )
     sem = asyncio.Semaphore(concurrency)
@@ -276,13 +278,19 @@ def fmt(v: float) -> str:
 
 
 def write_report(
-    summaries: dict[str, Summary], ready_s: dict[str, float], out: Path
+    summaries: dict[str, Summary],
+    ready_s: dict[str, float],
+    failed: list[str],
+    out: Path,
 ) -> None:
     """Write ``report.md`` with the setup, one chart and one table per scenario."""
     names = list(summaries)
     a, b = names
     mtp = "on" if CONFIG.sglang_mtp else "off"
     ready = ", ".join(f"{e} {s:.0f} s" for e, s in ready_s.items())
+    # Reliability matters for the decision too: list every measurement that had
+    # failed requests (it was repeated; the table shows the last attempt).
+    failures = "; ".join(failed) or "none"
     lines = [
         f"# Gemma 4: {a} vs {b}",
         "",
@@ -298,6 +306,7 @@ def write_report(
             "- Thinking off, fixed output length (`ignore_eos`), unique prompts"
             " (no prefix cache)"
         ),
+        f"- Load levels with failed requests (measured again): {failures}",
         (
             f"- SLO for goodput: TTFT < {SLO_TTFT_S * 1000:.0f} ms"
             f" and TPOT < {SLO_TPOT_S * 1000:.0f} ms"
@@ -393,6 +402,7 @@ def main(quick: bool = False) -> None:
     raw: dict[str, Any] = {}
     summaries: dict[str, Summary] = {}
     ready_s: dict[str, float] = {}
+    failed: list[str] = []  # "engine scenario c=N: X % errors" per failed attempt
 
     token = proxy_token()
     for engine, key in LABELS.items():
@@ -413,7 +423,12 @@ def main(quick: bool = False) -> None:
                         f"  TTFT p50 {fmt(s['ttft_p50'])} ms, TPOT p50 {fmt(s['tpot_p50'])} ms,"
                         f" {fmt(s['tps'])} tok/s, errors {fmt(s['errors'])} %"
                     )
-                    if s["errors"] == 0 or attempt == ATTEMPTS:
+                    if s["errors"] == 0:
+                        break
+                    failed.append(
+                        f"{engine} {scenario} c={c}: {fmt(s['errors'])} % errors"
+                    )
+                    if attempt == ATTEMPTS:
                         break
                     # Usually the GPU container was preempted (Modal then answers
                     # 503 until a new one boots). Wait for it, warm it, measure again.
@@ -429,5 +444,5 @@ def main(quick: bool = False) -> None:
     (out / "results.json").write_text(json.dumps(raw, indent=1))
     for scenario in scenarios:
         plot(summaries, scenario, out / f"{scenario}.png")
-    write_report(summaries, ready_s, out)
+    write_report(summaries, ready_s, failed, out)
     print(f"\nReport: {out / 'report.md'}")
